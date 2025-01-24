@@ -44,6 +44,9 @@ def create_dataloaders(ds_root: Path, mean: tuple, std: tuple, batch_size: int) 
         torchvision.transforms.ToTensor(),
         torchvision.transforms.CenterCrop(size=32),
         torchvision.transforms.Normalize(mean=mean, std=std),
+        torchvision.transforms.RandomHorizontalFlip(p=0.3),
+        torchvision.transforms.RandomVerticalFlip(p=0.3),
+        torchvision.transforms.RandomGrayscale(p=0.3)
     ])
     eval_transforms = Compose([
         torchvision.transforms.ToTensor(),
@@ -289,6 +292,7 @@ def train(
         if val_loss < best_val_loss:
             patience_counter = 0
             best_val_loss = val_loss
+            print("saving...")
             save_checkpoint(model=model, save_path=model_save_path.joinpath(model_save_name))
         else:
             patience_counter += 1
@@ -390,3 +394,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
