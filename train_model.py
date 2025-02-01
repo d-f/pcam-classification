@@ -26,6 +26,7 @@ def parse_cla():
     parser.add_argument("-model_save_path", type=Path)
     parser.add_argument("-model_save_name", type=str)
     parser.add_argument("-result_file_path", type=Path)
+    parser.add_argument("-weight_path", type=Path)
     return parser.parse_args()
 
 
@@ -44,9 +45,11 @@ def create_dataloaders(ds_root: Path, mean: tuple, std: tuple, batch_size: int) 
         torchvision.transforms.ToTensor(),
         torchvision.transforms.CenterCrop(size=32),
         torchvision.transforms.Normalize(mean=mean, std=std),
-        torchvision.transforms.RandomHorizontalFlip(p=0.3),
-        torchvision.transforms.RandomVerticalFlip(p=0.3),
-        torchvision.transforms.RandomGrayscale(p=0.3)
+        torchvision.transforms.RandomApply([
+            torchvision.transforms.RandomHorizontalFlip(),
+            torchvision.transforms.RandomVerticalFlip(),
+            torchvision.transforms.RandomGrayscale()
+        ], p=0.2)
     ])
     eval_transforms = Compose([
         torchvision.transforms.ToTensor(),
@@ -81,7 +84,7 @@ def define_model(num_classes: int) -> Type[torchvision.models.efficientnet_b0]:
 
     returns efficientnet_b0 model
     """
-    model = torchvision.models.efficientnet_b0(weights=torchvision.models.EfficientNet_B0_Weights.IMAGENET1K_V1)
+    model = torchvision.models.efficientnet_b7(weights=torchvision.models.EfficientNet_B7_Weights.IMAGENET1K_V1, dropout=0.3)
     output_layer = model.classifier[1]
     new_out = torch.nn.Linear(in_features=output_layer.in_features, out_features=num_classes)    
     model.classifier[1] = new_out
@@ -130,7 +133,7 @@ def define_optim(
     learning_rate: weight to scale the gradient values
     """
     relevant_params = [x for x in model.parameters() if x.requires_grad]
-    return torch.optim.Adam(params=relevant_params, lr=learning_rate)
+    return torch.optim.AdamW(params=relevant_params, lr=learning_rate, weight_decay=1e-4)
 
 
 def define_loss() -> Type[torch.nn.CrossEntropyLoss]:
@@ -168,19 +171,18 @@ def evaluate(
         total_samples = 0
         for data, targets in tqdm(data_loader, desc=mode):
             data = data.to(device)
-            one_hot_targets = torch.nn.functional.one_hot(targets, num_classes=2)
             targets = targets.to(device)
 
             scores = model(data)
 
             batch_train_loss = loss(scores, targets)
             loss_value += batch_train_loss.item()
-             
             
-            for one_hot in one_hot_targets.cpu().numpy():
-                roc_targets.append(one_hot)
-            for score in scores.detach().cpu().numpy():
-                roc_scores.append(score)
+            for target in targets.cpu().numpy():
+                roc_targets.append(target)
+            soft_scores = torch.nn.functional.softmax(scores, dim=1)
+            for score in soft_scores:
+                roc_scores.append(score[1].detach().cpu().numpy())
 
             num_correct = (scores.argmax(dim=1)==targets).sum().item()
             total_correct += num_correct
@@ -247,6 +249,7 @@ def train(
         roc_scores = []
         total_correct = 0
         total_samples = 0
+
         for data, targets in tqdm(train_dl, desc="Train"):
             data = data.to(device)
             targets = targets.to(device)
@@ -260,11 +263,11 @@ def train(
             optimizer.step()
 
             with torch.no_grad():
-                one_hot_targets = torch.nn.functional.one_hot(targets, num_classes=2)
-                for one_hot in one_hot_targets.cpu().numpy():
-                    roc_targets.append(one_hot)
-                for score in scores.detach().cpu().numpy():
-                    roc_scores.append(score)
+                for target in targets.cpu().numpy():
+                    roc_targets.append(target)
+                soft_scores = torch.nn.functional.softmax(scores, dim=1)
+                for score in soft_scores:
+                   roc_scores.append(score[1].detach().cpu().numpy())
                 num_correct = (scores.argmax(dim=1)==targets).sum().item()
                 total_correct += num_correct
                 total_samples += len(targets)
@@ -290,7 +293,7 @@ def train(
         print(f"val loss: {val_loss}, val acc: {val_acc}, val roc: {val_roc}")
 
         if val_loss < best_val_loss:
-            patience_counter = 0
+            patience_counter = 0 
             best_val_loss = val_loss
             print("saving...")
             save_checkpoint(model=model, save_path=model_save_path.joinpath(model_save_name))
@@ -347,6 +350,8 @@ def main():
     ds_stats = read_json(args.ds_stat_path)
     train_dl, val_dl, test_dl = create_dataloaders(ds_root=args.pcam_dir, mean=ds_stats["mean"], std=ds_stats["std"], batch_size=args.batch_size)
     model = define_model(num_classes=2)
+    if args.weight_path:
+        model = torch.load(args.weight_path)
     if args.freeze_base:
         freeze_base(model)
     model_summary(model)
@@ -394,4 +399,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
