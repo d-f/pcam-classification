@@ -1,5 +1,5 @@
 # pcam-classification
-EfficientNet-b0 was used to classify malignancies in images of H&E stained lymph node tissue. 
+EfficientNet-b0 was used to classify tumor cells in images of H&E stained lymph node tissue. 
 
 Hyperparameters
 | Learning rate  | Batch size | Loss          | Optimizer | Weight decay | 
