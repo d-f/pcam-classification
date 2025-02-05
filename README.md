@@ -24,3 +24,16 @@ Test Results
 | Accuracy  | ROC-AUC | Test Loss | 
 | --------- | ------- | --------- |
 | 78%       | 0.87    | 0.4640    |
+
+
+![image](https://github.com/user-attachments/assets/a61ee0f6-8962-41f6-8a68-7b606841ca7d)
+Original image (no tumor cells)
+
+![image](https://github.com/user-attachments/assets/940b2bf4-4962-458a-b461-3556e64adffa)
+GradCAM
+
+![image](https://github.com/user-attachments/assets/9a058a17-08fb-41f0-9a8e-bc6703626eae)
+Original Image (tumor cells)
+
+![image](https://github.com/user-attachments/assets/ad902bcc-436e-4f0a-a628-4ddd29340c3c)
+GradCAM
