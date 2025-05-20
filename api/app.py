@@ -7,76 +7,21 @@ import torch
 from flask import Flask, request, jsonify
 from torchvision.transforms import Compose
 import json
-from typing import Dict
+from typing import Dict, Type
 from torchvision.transforms import Lambda
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-
-app = Flask(__name__)
-
-
-def read_json(json_path: Path) -> Dict:
-    """
-    reads JSON file and returns dictionary of file contents
-    """
-    with open(json_path, mode="r") as opened_json:
-        return json.load(opened_json)
+from torch.utils.data import DataLoader
 
 
-DEVICE = torch.device('cuda')
-MODEL_PATH = '../models/model_1.pth.tar'
-UPLOAD_PATH = '../data/uploads/'
-DS_STATS = read_json('../data/ds_mean_std.csv')
-CLASS_LIST = ["Contains no tumor", "Contains tumor"]
-    
-try:
-    model = torch.load(MODEL_PATH, weights_only=False)
-    model.to(DEVICE)
-    MODEL_LOADED = True
-except Exception as e:
-    MODEL_LOADED = False
-    print(e)
-
-
-@app.route('/')
-def home():
-    if MODEL_LOADED:
-        return jsonify({"status": "ready", "message": "Model is loaded"})
-    else:
-        return jsonify({"status": "not ready", "message": "Model did not load, check server logs for details"})
-
-
-@app.route('/predict', methods=['POST'])
-def predict():
-    img_filename = request.args['filename']
-    tensor = prepare_img(
-        filepath=Path(UPLOAD_PATH).joinpath(img_filename),
-        mean=DS_STATS['mean'],
-        std=DS_STATS['std']
-        )
-    pred = model(tensor)
-
-    generate_gradcam(
-        model=model, 
-        pred_class=pred.argmax(dim=1).item(),
-        save_dir=Path('../data/output_imgs/'),
-        model_name=MODEL_PATH.rpartition("/")[2],
-        input_img=Image.open(Path(UPLOAD_PATH).joinpath(img_filename)),
-        input_tensor=tensor,
-        input_filename=img_filename
-        )
-
-    return jsonify({'prediction': CLASS_LIST[pred.argmax(dim=1).item()]})
-
-
-def prepare_img(filepath, mean, std):
+def prepare_img(filepath, mean, std, device):
     transforms = Compose([
         torchvision.transforms.ToTensor(),
         Lambda(lambda x: x.unsqueeze(0)),
         torchvision.transforms.Normalize(mean=mean, std=std)
     ])
     loaded_img = Image.open(filepath)
-    norm_tensor = transforms(loaded_img).to(DEVICE)
+    norm_tensor = transforms(loaded_img).to(device)
     return norm_tensor
 
 
@@ -108,3 +53,139 @@ def generate_gradcam(
         pad_inches=0
         )
     plt.close()
+
+
+class NewDataset(torch.utils.data.Dataset):
+    def __init__(self, transforms, upload_dir):
+        self.transforms = transforms
+        self.uploads = [x for x in upload_dir.iterdir()]
+
+    def __len__(self):
+        return len([x for x in self.upload_dir.iterdir()])
+    
+    def __getitem__(self, index):
+        img_path = self.uploads[index]
+        loaded_img = Image.open(img_path)
+        norm_tensor = self.transforms(loaded_img)
+        return norm_tensor
+
+
+
+def create_dataloaders(pcam_root: Path, mean: tuple, std: tuple, batch_size: int) -> tuple[Type[DataLoader]]:
+    """
+    creates PyTorch DataLoaders
+
+    ds_root:    Path to the PCAM dataset files
+    mean:       mean for each channel across the train dataset
+    std:        standard deviation for each channel across the train dataset 
+    batch_size: number of images in each batch 
+
+    returns tuple of DataLoaders for each dataset partition
+    """
+    eval_transforms = Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.CenterCrop(size=32),
+        torchvision.transforms.Normalize(mean=mean, std=std)
+    ])
+    train_ds = torchvision.datasets.PCAM(split="train", root=pcam_root, download=False, transform=eval_transforms)
+    new_ds = NewDataset(transforms=eval_transforms, upload_dir=UPLOAD_PATH)
+
+    train_dl = DataLoader(dataset=train_ds, batch_size=batch_size, shuffle=False)
+    new_dl = DataLoader(dataset=new_ds, batch_size=batch_size, shuffle=False)
+
+    return train_dl, new_dl
+
+
+def init_model(app):
+    """Initialize the model and store it in app config"""
+    try:
+        model = torch.load(app.config['MODEL_PATH'], weights_only=False)
+        model.to(app.config['DEVICE'])
+        app.config['MODEL'] = model
+        app.config['MODEL_LOADED'] = True
+    except Exception as e:
+        app.config['MODEL_LOADED'] = False
+        app.logger.error(f"Model failed to load: {e}")
+
+
+def create_app():
+    app = Flask(__name__)
+    
+    app.config.from_mapping(
+        DEVICE=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+        MODEL_PATH='../models/model_1.pth.tar',
+        UPLOAD_PATH='../data/uploads/',
+        CLASS_LIST=["Contains no tumor", "Contains tumor"],
+    )
+
+    # Load dataset statistics
+    with open('../data/ds_mean_std.csv', mode="r") as opened_json:
+        app.config['DS_STATS'] = json.load(opened_json)
+
+    # Initialize model at app startup
+    with app.app_context():
+        init_model(app)
+    
+
+    @app.route('/')
+    def home():
+        if app.config.get('MODEL_LOADED', False):
+            return jsonify({"status": "ready", "message": "Model is loaded"})
+        else:
+            return jsonify({"status": "not ready", "message": "Model did not load, check server logs for details"})
+    
+
+    @app.route('/predict', methods=['POST'])
+    def predict():
+        img_filename = request.args['filename']
+        tensor = prepare_img(
+            filepath=Path(app.config['UPLOAD_PATH']).joinpath(img_filename),
+            mean=app.config['DS_STATS']['mean'],
+            std=app.config['DS_STATS']['std'],
+            device=app.config['DEVICE']
+        )
+        model = app.config['MODEL']
+        pred = model(tensor)
+        
+        generate_gradcam(
+            model=model, 
+            pred_class=pred.argmax(dim=1).item(),
+            save_dir=Path('../data/output_imgs/'),
+            model_name=app.config['MODEL_PATH'].rpartition("/")[2],
+            input_img=Image.open(Path(app.config['UPLOAD_PATH']).joinpath(img_filename)),
+            input_tensor=tensor,
+            input_filename=img_filename
+        )
+        
+        return jsonify({'prediction': app.config['CLASS_LIST'][pred.argmax(dim=1).item()]})
+    
+
+    @app.route('/monitor_data', methods=['POST'])
+    def monitor_data():
+        with torch.no_grad():
+            # list for embedded train data
+            train_prod = []
+            # list for embedded new input data
+            new_prod = []
+
+            train_dl, new_dl = create_dataloaders(
+                pcam_root="", 
+                mean=app.config['DS_STATS']['mean'], 
+                std=app.config['DS_STATS']['std'],
+                batch_size=1
+            )
+            model = app.config['MODEL']
+
+            for img_tensor in train_dl:
+                out = model(img_tensor)
+                train_prod.append(out.item())
+
+            for img_tensor in new_dl:
+                out = model(img_tensor)
+                new_prod.append(out.item())
+
+    return app
+
+if __name__ == "__main__":
+    app = create_app()
+    app.run(debug=True)
