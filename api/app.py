@@ -72,8 +72,12 @@ def create_app():
     def monitor_data():
         with torch.no_grad():
             model = app.config['MODEL']
+
+            # keep track of old classifier
             old_classifier = model.classifier
 
+            # replace classifier with Identity to 
+            # embed the input rather than classify
             model.classifier = nn.Identity()
 
             # list for embedded train data
@@ -97,9 +101,10 @@ def create_app():
                 out = model(ds_tuple[0].unsqueeze(0).to(app.config['DEVICE']))
                 new_prod.append(out[0].cpu().numpy())
 
-            # calculate max mean discrepency test stat and p value
+            # calculate max mean discrepancy test stat and p value
             stat, p_value = MMD().test(np.array(train_prod), np.array(new_prod))
 
+            # return classifier to original state
             model.classifier = old_classifier
 
             return jsonify({"stat": stat, "p value": p_value, "drift detected": p_value<=0.05})
