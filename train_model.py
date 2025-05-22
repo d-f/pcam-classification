@@ -84,7 +84,7 @@ def define_model(num_classes: int) -> Type[torchvision.models.efficientnet_b0]:
 
     returns efficientnet_b0 model
     """
-    model = torchvision.models.efficientnet_b7(weights=torchvision.models.EfficientNet_B7_Weights.IMAGENET1K_V1, dropout=0.3)
+    model = torchvision.models.efficientnet_b0(weights=torchvision.models.EfficientNet_B0_Weights.IMAGENET1K_V1, dropout=0.3)
     output_layer = model.classifier[1]
     new_out = torch.nn.Linear(in_features=output_layer.in_features, out_features=num_classes)    
     model.classifier[1] = new_out
@@ -169,6 +169,7 @@ def evaluate(
         roc_scores = []
         total_correct = 0
         total_samples = 0
+
         for data, targets in tqdm(data_loader, desc=mode):
             data = data.to(device)
             targets = targets.to(device)
@@ -352,8 +353,10 @@ def main():
     model = define_model(num_classes=2)
     if args.weight_path:
         model = torch.load(args.weight_path)
-    if args.freeze_base:
-        freeze_base(model)
+
+    for param in model.parameters():
+        param.requires_grad = True
+
     model_summary(model)
     loss = define_loss()
     optimizer = define_optim(model=model, learning_rate=args.lr)
