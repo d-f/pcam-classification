@@ -1,4 +1,19 @@
-# pcam-classification
+# API Endpoints
+```/home``` - returns string indicating the application is running
+
+```/predict``` - classifies an image as containing tumor tissue or not with EfficientNet-B0
+
+```/monitor_data``` - monitors whether new data has drifted significantly from the evaluation data with maximum mean discrepancy
+
+```/eval``` - evaluates a model on the original test dataset and additional labeled data
+
+```/retrain``` - retrains a model on original training data and additional labeled data
+
+```/uncertainty_range``` - measures descriptive statistics of the uncertainty values from the original test set
+
+```/ab_test_uncertainty``` - A/B test between models with different uncertainty threshold values for rejecting highly uncertain predictions, 'inf' as a value for one of the uncertainties will effectively bypass the uncertainty thresholding. Statistical significance measured with a two-proportion z test
+
+# Results
 EfficientNet-B0 was used to classify tumor cells in images of H&E stained lymph node tissue. 
 
 The first round of training froze all of the parameters in the base of the model except for the last two blocks each containing a convolutional layer, batch norm and SiLU and the classifier. Parameters were initialized from an EfficientNet-B0  model that was previously trained on ImageNet. The last two blocks were unfrozen instead of just the classifier since the ImageNet features should be significantly different than PCAM, given the different subject material and image resolution. The classifier parameters were replaced since they require a different number of neurons.
